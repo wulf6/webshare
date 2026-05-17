@@ -134,10 +134,19 @@ def _normalize(s):
 
 def _quality(n):
     nl = n.lower()
-    if any(x in nl for x in ['2160p','4k','uhd','bdremux','ultrahd']): return '4K'
-    if any(x in nl for x in ['1080p','1080i','fullhd','fhd']):         return '1080p'
-    if '720p' in nl:                                                     return '720p'
-    if any(x in nl for x in ['480p','576p','dvdrip']):                  return '480p'
+    if any(x in nl for x in [
+        '2160p', '4k', 'uhd', 'bdremux', 'ultrahd', '4kuhd',
+    ]): return '4K'
+    if any(x in nl for x in [
+        '1080p', '1080i', 'fullhd', 'fhd',
+    ]): return '1080p'
+    if any(x in nl for x in [
+        '720p',
+    ]): return '720p'
+    if any(x in nl for x in [
+        '480p', '576p', '360p', '240p',
+        'dvdrip', 'dvdscr', 'dvd', 'vhsrip', 'cam', 'ts',
+    ]): return 'SD'
     return ''
 
 def _cz(n):
@@ -258,18 +267,38 @@ def build_queries():
         q.append(f's01e01 1080p {y}')
 
     # FILMY – kombinace roku × kvality × jazyka
-    qualities_4k  = ['4k', '2160p', 'uhd', 'uhd bluray', '4k remux',
-                     '2160p remux', 'uhd remux', 'bdremux', '4k hdr',
-                     '2160p hdr', '4k hevc', 'ultrahd', '4k x265']
-    qualities_hd  = ['1080p', 'fullhd', '1080p remux', '1080p bluray',
-                     '1080p hevc', '1080p x265', '1080p web-dl', '1080p webrip']
-    qualities_std = ['720p', 'bluray', 'webrip', 'web-dl', 'dvdrip', 'bdrip', 'hdtv']
+    qualities_4k  = [
+        '4k', '2160p', 'uhd', 'ultrahd', '4k bluray', 'uhd bluray',
+        'bdremux', 'uhd remux', '4k remux', '2160p remux',
+        '4k hdr', '2160p hdr', '4k hdr10', '4k dv', '4k dolby',
+        '4k hevc', '4k x265', '4k h265', '2160p hevc', '2160p x265',
+        '4k web-dl', '4k webrip', '2160p web-dl', '2160p webrip',
+        '2160p amzn', '2160p nf', '2160p dsnp',
+    ]
+    qualities_hd  = [
+        '1080p', '1080i', 'fullhd', 'fhd',
+        '1080p bluray', '1080p remux', '1080p bdremux',
+        '1080p hevc', '1080p x265', '1080p h265',
+        '1080p x264', '1080p h264',
+        '1080p web-dl', '1080p webrip', '1080p amzn',
+        '1080p nf', '1080p dsnp', '1080p hmax',
+        '1080p hdr', '1080p hdr10',
+    ]
+    qualities_hd_low = [
+        '720p', '720p bluray', '720p web-dl', '720p webrip',
+        '720p hevc', '720p x265', '720p x264', '720p hdrip', '720p bdrip',
+    ]
+    qualities_std = [
+        'bluray', 'bdrip', 'dvdrip', 'dvdscr', 'dvd',
+        'webrip', 'web-dl', 'hdtv', 'pdtv', 'hdrip',
+        'xvid', 'divx', 'vhsrip', 'vodrip',
+    ]
 
     # Novější roky – více kombinací
     for y in range(YEAR, YEAR - 6, -1):
         for qk in qualities_4k + qualities_hd:
             q.append(f'{qk} {y}')
-        for qk in qualities_std:
+        for qk in qualities_hd_low + qualities_std:
             q.append(f'{qk} {y}')
         q.append(f'cz dabing {y}')
         q.append(f'cz dabing 1080p {y}')
@@ -291,12 +320,134 @@ def build_queries():
 
     # Obecné dotazy bez roku
     q += [
-        'cz dabing 1080p', 'cz dabing 4k', 'sk dabing 1080p',
-        'cz dabing bluray', '4k bluray cz', 'uhd bluray cz',
-        '4k remux', 'bdremux', 'uhd remux', '4k hdr',
-        '1080p remux', '1080p bluray', 'hevc 1080p', 'x265 1080p',
-        'remux', 'bluray remux', 'bdrip',
+        'cz dabing 1080p', 'cz dabing 4k', 'cz dabing 720p',
+        'sk dabing 1080p', 'sk dabing 4k', 'sk dabing 720p',
+        'cz dabing bluray', 'cz titulky 1080p',
+        '4k bluray cz', 'uhd bluray cz', '4k remux', 'bdremux',
+        'uhd remux', '4k hdr', '4k hevc', '2160p hevc', 'uhd bluray',
+        '4k web-dl', '4k dv', '1080p remux', '1080p bluray',
+        'hevc 1080p', 'x265 1080p', 'h265 1080p', '1080p hdr',
+        '720p bluray', '720p web-dl', '720p hevc', '720p x265',
+        'remux', 'bluray remux', 'bdrip', 'dvdrip', 'dvdscr',
+        'xvid cz', 'divx cz', 'bluray cz', 'webrip cz', 'hdtv cz',
     ]
+
+    # Přímé názvy populárních seriálů – CZ i EN
+    POPULAR_SERIES = [
+        # Animované
+        'simpsonovi', 'the simpsons',
+        'futurama', 'rick and morty',
+        'family guy', 'american dad',
+        'south park', 'avatar',
+        'beavis and butt-head',
+        'bobs burgers', 'archer',
+        'bojack horseman', 'disenchantment',
+        'final space', 'big mouth',
+
+        # Akční / Sci-Fi / Fantasy
+        'hra o truny', 'game of thrones',
+        'breaking bad', 'better call saul',
+        'the walking dead', 'fear the walking dead',
+        'stranger things', 'dark',
+        'the witcher', 'zaklinar',
+        'mandalorian', 'star wars',
+        'westworld', 'altered carbon',
+        'black mirror', 'lost',
+        'battlestar galactica',
+        'the expanse', 'firefly',
+        'fringe', 'x-files', 'akta x',
+        'heroes', 'supernatural',
+        'vikings', 'the last kingdom',
+        'house of dragon', 'rod draku',
+        'rings of power', 'wheel of time',
+        'the boys', 'invincible',
+        'loki', 'wandavision', 'hawkeye',
+        'daredevil', 'jessica jones',
+        'prison break', '24',
+        'la casa de papel', 'papirovy dum',
+        'money heist', 'narcos',
+        'squid game', 'hra na olihen',
+        'kingdom', 'dark tourist',
+        'severance', 'yellowjackets',
+        'the last of us', 'fallout',
+        'euphoria', 'succession',
+        'andor', 'obi-wan',
+
+        # Komedie / Drama
+        'pratele', 'friends',
+        'how i met your mother',
+        'the office', 'parks and recreation',
+        'seinfeld', 'it crowd',
+        'brooklyn nine-nine', 'brooklyn 99',
+        'new girl', 'two and a half men',
+        'big bang theory', 'teorie velkeho tresku',
+        'scrubs', 'community',
+        'arrested development',
+        'curb your enthusiasm',
+        'modern family', 'schitts creek',
+        'fleabag', 'ted lasso',
+        'abbott elementary', 'what we do in the shadows',
+
+        # Krimi / Thriller
+        'true detective', 'mindhunter',
+        'dexter', 'the wire',
+        'sopranos', 'boardwalk empire',
+        'peaky blinders', 'ozark',
+        'yellowstone', 'justified',
+        'sherlock', 'elementary',
+        'mentalist', 'monk',
+        'columbo', 'psych',
+        'bones', 'castle',
+        'criminal minds', 'csi',
+        'law and order', 'ncis',
+        'fargo', 'true blood',
+
+        # Reality / Dokumenty
+        'formula 1 drive to survive',
+        'planet earth', 'blue planet',
+        'our planet', 'attenborough',
+
+        # České a slovenské
+        'ulice', 'ordinace v ruzove zahrade',
+        'krejzovi', 'comeback',
+        'vypravi', 'dekalog',
+        'hordubalovi', 'pan tajemnik',
+        'lajna', 'most',
+        'rtvs', 'ceska televize',
+        'prima cool', 'nova cinema',
+
+        # Japonské / Anime
+        'naruto', 'one piece',
+        'dragon ball', 'attack on titan',
+        'demon slayer', 'jujutsu kaisen',
+        'death note', 'fullmetal alchemist',
+        'sword art online', 'my hero academia',
+        'hunter x hunter', 'bleach',
+        'fairy tail', 'one punch man',
+        'vinland saga', 'chainsaw man',
+        'spy x family', 'tokyo revengers',
+        'overlord', 'shield hero',
+        'black clover', 're zero',
+        'steins gate', 'code geass',
+        'cowboy bebop', 'neon genesis evangelion',
+
+        # Korejské
+        'all of us are dead',
+        'sweet home', 'hellbound',
+        'moving', 'mask girl',
+
+        # Turecké
+        'dirilis ertugrul', 'kurulus osman',
+        'kara para ask', 'fatih harbiye',
+    ]
+
+    # Pro každý seriál přidej přímý dotaz + varianty
+    for show in POPULAR_SERIES:
+        q.append(show)
+        q.append(f'{show} cz')
+        q.append(f'{show} 1080p')
+        q.append(f'{show} s01')
+        q.append(f'{show} s02')
 
     # Deduplikace při zachování pořadí
     seen = set()
