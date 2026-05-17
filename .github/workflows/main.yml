@@ -1,0 +1,44 @@
+name: Build Webshare DB
+
+on:
+  schedule:
+    # Každou noc ve 3:00 UTC (4:00 nebo 5:00 CET/CEST)
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    # Možnost spustit ručně z GitHub UI tlačítkem "Run workflow"
+    inputs:
+      force_rebuild:
+        description: 'Přepiš existující DB úplně'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90   # max 1.5 hodiny, pak GitHub Action zastaví
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build databáze
+        env:
+          WS_USER: ${{ secrets.WS_USER }}
+          WS_PASS: ${{ secrets.WS_PASS }}
+        run: |
+          python scripts/build_db.py
+
+      - name: Commit a push aktualizované JSON soubory
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add db/
+          # Commitni jen pokud je změna
+          git diff --staged --quiet || git commit -m "DB update $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push
