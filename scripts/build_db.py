@@ -441,13 +441,27 @@ def build_queries():
         'kara para ask', 'fatih harbiye',
     ]
 
-    # Pro každý seriál přidej přímý dotaz + varianty
+    # Dlouhé seriály (35+ sezón) – hledáme každou sezónu zvlášť
+    LONG_SERIES = [
+        'simpsonovi', 'the simpsons',
+        'law and order', 'ncis', 'criminal minds',
+        'csi', 'supernatural', 'greys anatomy',
+        'er', 'bones', 'castle', 'monk', 'columbo',
+        'one piece', 'naruto', 'bleach', 'fairy tail',
+        'dragon ball', 'pokemon',
+    ]
+    LONG_SERIES = [s.replace("'", "") for s in LONG_SERIES]
+
     for show in POPULAR_SERIES:
         q.append(show)
         q.append(f'{show} cz')
         q.append(f'{show} 1080p')
-        q.append(f'{show} s01')
-        q.append(f'{show} s02')
+        q.append(f'{show} 720p')
+        max_seasons = 40 if show in LONG_SERIES else 15
+        for s in range(1, max_seasons + 1):
+            stag = f's{s:02d}'
+            q.append(f'{show} {stag}')
+            q.append(f'{show} {stag} cz')
 
     # Deduplikace při zachování pořadí
     seen = set()
