@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-match_db.py v2 – TMDB matching s Bearer tokenem (v4 API)
-CZ název pokud existuje, jinak EN název
+match_db.py v3 – Wikidata matching
+CZ + EN nazvy filmu a serialu, funguje z GitHub Actions
 """
 import os, json, time, re, unicodedata, urllib.request, urllib.parse, gzip
 from difflib import SequenceMatcher
 
-TMDB_KEY = os.environ.get('TMDB_KEY', '')
-DB_DIR   = os.path.join(os.path.dirname(__file__), '..', 'db')
-API      = 'https://api.themoviedb.org/3'
-IMG      = 'https://image.tmdb.org/t/p/w300'
+DB_DIR = os.path.join(os.path.dirname(__file__), '..', 'db')
+SPARQL = 'https://query.wikidata.org/sparql'
+IMG    = 'https://image.tmdb.org/t/p/w300'
 
 def norm(s):
     if not s: return ''
@@ -23,84 +22,27 @@ def norm(s):
 def similarity(a, b):
     return SequenceMatcher(None, norm(a), norm(b)).ratio()
 
-def tmdb_get(path, params={}):
-    if not TMDB_KEY: return None
-    url = f'{API}{path}?{urllib.parse.urlencode(params)}'
+def wikidata_query(sparql):
+    """Spustí SPARQL dotaz na Wikidata."""
+    url = SPARQL + '?' + urllib.parse.urlencode({'query': sparql, 'format': 'json'})
+    req = urllib.request.Request(url, headers={
+        'User-Agent': 'WebshareKodiBot/1.0 (github.com/wulf6/webshare)',
+        'Accept': 'application/json',
+    })
     try:
-        req = urllib.request.Request(url, headers={
-            'Authorization': f'Bearer {TMDB_KEY}',
-            'Accept': 'application/json',
-            'User-Agent': 'KodiAddon/5.0',
-        })
-        with urllib.request.urlopen(req, timeout=15) as r:
+        with urllib.request.urlopen(req, timeout=30) as r:
             return json.loads(r.read())
     except Exception as e:
-        print(f'  [TMDB] {path}: {e}')
+        print(f'  [WD] chyba: {e}')
         return None
 
-def best_title(cs_title, en_title, ws_title):
-    """
-    Vrátí (display_title, alt_title).
-    Preferuje CZ název pokud existuje a je smysluplný.
-    """
-    cs = (cs_title or '').strip()
-    en = (en_title or '').strip()
-    if cs and cs.lower() != en.lower():
-        return cs, en   # mame CZ preklad → zobraz CZ, alternativa EN
-    return en, ''       # jen EN nazev
-
-def search_movie(title, year=None):
-    params = {'query': title, 'language': 'cs'}
-    if year: params['primary_release_year'] = year
-    data = tmdb_get('/search/movie', params)
-    results = (data or {}).get('results', [])
-    if not results and year:
-        data = tmdb_get('/search/movie', {'query': title, 'language': 'cs'})
-        results = (data or {}).get('results', [])
-    return results[0] if results else None
-
-def search_tv(title):
-    data = tmdb_get('/search/tv', {'query': title, 'language': 'cs'})
-    results = (data or {}).get('results', [])
-    return results[0] if results else None
-
-def movie_details(tmdb_id):
-    cs = tmdb_get(f'/movie/{tmdb_id}', {'language': 'cs'}) or {}
-    en = tmdb_get(f'/movie/{tmdb_id}', {'language': 'en'}) or {}
-    cs_title = cs.get('title', '')
-    en_title = en.get('title', '') or cs.get('original_title', '')
-    display, alt = best_title(cs_title, en_title, '')
-    return {
-        'tmdb_id':       tmdb_id,
-        'display_title': display,   # co se zobrazí v Kodi
-        'alt_title':     alt,       # alternativní název
-        'cz_title':      cs_title,
-        'en_title':      en_title,
-        'overview':      cs.get('overview','') or en.get('overview',''),
-        'poster':        IMG + cs.get('poster_path','') if cs.get('poster_path') else
-                         (IMG + en.get('poster_path','') if en.get('poster_path') else ''),
-        'genres':        [g['name'] for g in (cs.get('genres') or [])],
-        'vote_average':  cs.get('vote_average', 0),
-    }
-
-def tv_details(tmdb_id):
-    cs = tmdb_get(f'/tv/{tmdb_id}', {'language': 'cs'}) or {}
-    en = tmdb_get(f'/tv/{tmdb_id}', {'language': 'en'}) or {}
-    cs_title = cs.get('name', '')
-    en_title = en.get('name', '') or cs.get('original_name', '')
-    display, alt = best_title(cs_title, en_title, '')
-    return {
-        'tmdb_id':       tmdb_id,
-        'display_title': display,
-        'alt_title':     alt,
-        'cz_title':      cs_title,
-        'en_title':      en_title,
-        'overview':      cs.get('overview','') or en.get('overview',''),
-        'poster':        IMG + cs.get('poster_path','') if cs.get('poster_path') else
-                         (IMG + en.get('poster_path','') if en.get('poster_path') else ''),
-        'genres':        [g['name'] for g in (cs.get('genres') or [])],
-        'vote_average':  cs.get('vote_average', 0),
-    }
+def best_title(cz, en):
+    """CZ název pokud existuje a liší se od EN, jinak EN."""
+    cz = (cz or '').strip()
+    en = (en or '').strip()
+    if cz and norm(cz) != norm(en):
+        return cz, en
+    return en, ''
 
 def load_json(path):
     if not os.path.exists(path): return []
@@ -110,79 +52,153 @@ def save_json(path, data):
     text = json.dumps(data, ensure_ascii=False, separators=(',',':'))
     with open(path, 'w', encoding='utf-8') as f: f.write(text)
     with gzip.open(path+'.gz','wb') as f: f.write(text.encode())
-    print(f'  Ulozeno: {os.path.basename(path)} ({os.path.getsize(path)//1024} KB)')
+    print(f'  Ulozeno: {os.path.basename(path)} ({os.path.getsize(path)//1024} KB, {len(data)} polozek)')
 
-def match_movies(movies):
+# ── Stažení celé Wikidata DB filmů a seriálů ─────────────────────────────────
+
+def fetch_wikidata_movies():
+    """Stáhne top filmy z Wikidata s CZ+EN názvem."""
+    print('  Stahuji filmy z Wikidata...', flush=True)
+    sparql = '''
+    SELECT ?item ?enLabel ?csLabel ?year WHERE {
+      ?item wdt:P31 wd:Q11424.
+      ?item wdt:P577 ?date.
+      BIND(YEAR(?date) AS ?year)
+      FILTER(?year >= 1980)
+      ?item rdfs:label ?enLabel. FILTER(LANG(?enLabel) = "en")
+      OPTIONAL { ?item rdfs:label ?csLabel. FILTER(LANG(?csLabel) = "cs") }
+    }
+    LIMIT 50000
+    '''
+    data = wikidata_query(sparql)
+    if not data: return {}
+
+    result = {}
+    for row in data.get('results',{}).get('bindings',[]):
+        en  = row.get('enLabel',{}).get('value','')
+        cs  = row.get('csLabel',{}).get('value','')
+        yr  = row.get('year',{}).get('value','')
+        key = norm(en)
+        if key:
+            result[key] = {'en': en, 'cs': cs, 'year': int(yr) if yr else None}
+        # Taky indexuj podle CS nazvu
+        if cs:
+            result[norm(cs)] = {'en': en, 'cs': cs, 'year': int(yr) if yr else None}
+    print(f'  Nacteno {len(result)} filmovych zaznamu z Wikidata')
+    return result
+
+def fetch_wikidata_series():
+    """Stáhne TV seriály z Wikidata s CZ+EN názvem."""
+    print('  Stahuji serialy z Wikidata...', flush=True)
+    sparql = '''
+    SELECT ?item ?enLabel ?csLabel ?year WHERE {
+      ?item wdt:P31 wd:Q5398426.
+      OPTIONAL { ?item wdt:P580 ?date. BIND(YEAR(?date) AS ?year) }
+      ?item rdfs:label ?enLabel. FILTER(LANG(?enLabel) = "en")
+      OPTIONAL { ?item rdfs:label ?csLabel. FILTER(LANG(?csLabel) = "cs") }
+    }
+    LIMIT 30000
+    '''
+    data = wikidata_query(sparql)
+    if not data: return {}
+
+    result = {}
+    for row in data.get('results',{}).get('bindings',[]):
+        en  = row.get('enLabel',{}).get('value','')
+        cs  = row.get('csLabel',{}).get('value','')
+        yr  = row.get('year',{}).get('value','')
+        key = norm(en)
+        if key:
+            result[key] = {'en': en, 'cs': cs, 'year': int(yr) if yr else None}
+        if cs:
+            result[norm(cs)] = {'en': en, 'cs': cs, 'year': int(yr) if yr else None}
+    print(f'  Nacteno {len(result)} serialovych zaznamu z Wikidata')
+    return result
+
+# ── Matching ──────────────────────────────────────────────────────────────────
+
+def match_movies(movies, wd_movies):
     print(f'\nParovani filmu ({len(movies)} zaznamu)...')
     matched = 0
     for i, m in enumerate(movies):
-        if i % 200 == 0:
+        if i % 500 == 0:
             print(f'  [{i}/{len(movies)}] matched: {matched}', flush=True)
-        if m.get('tmdb_id'): continue
+        if m.get('display_title'): continue
+
         title = m.get('clean_title','')
         year  = m.get('year')
         if not title: continue
 
-        result = search_movie(title, year)
-        if not result: continue
+        # Hledej přímou shodu
+        key = norm(title)
+        hit = wd_movies.get(key)
 
-        sim = max(
-            similarity(title, result.get('title','')),
-            similarity(title, result.get('original_title',''))
-        )
-        if sim < 0.55: continue
+        # Pokud není přímá shoda, zkus fuzzy
+        if not hit:
+            best_sim = 0.0
+            for wd_key, wd_val in wd_movies.items():
+                # Zkontroluj rok pokud ho máme
+                if year and wd_val.get('year') and abs(wd_val['year'] - year) > 2:
+                    continue
+                s = similarity(title, wd_val['en'])
+                if s > best_sim and s >= 0.85:
+                    best_sim = s; hit = wd_val
+                if wd_val.get('cs'):
+                    s2 = similarity(title, wd_val['cs'])
+                    if s2 > best_sim and s2 >= 0.85:
+                        best_sim = s2; hit = wd_val
 
-        details = movie_details(result['id'])
-        if details:
-            m.update(details)
+        if hit:
+            display, alt = best_title(hit.get('cs',''), hit.get('en',''))
+            m['display_title'] = display
+            m['alt_title']     = alt
+            m['cz_title']      = hit.get('cs','')
+            m['en_title']      = hit.get('en','')
             matched += 1
-        time.sleep(0.05)
 
     print(f'  Hotovo: {matched}/{len(movies)} filmu sparovano')
     return movies
 
-def match_series(series):
+def match_series(series, wd_series):
     print(f'\nParovani serialu ({len(series)} zaznamu)...')
     matched = 0
     for i, s in enumerate(series):
-        if i % 100 == 0:
+        if i % 200 == 0:
             print(f'  [{i}/{len(series)}] matched: {matched}', flush=True)
-        if s.get('tmdb_id'): continue
+        if s.get('display_title'): continue
+
         title = s.get('show_title','')
         if not title: continue
 
-        result = search_tv(title)
-        if not result: continue
+        key = norm(title)
+        hit = wd_series.get(key)
 
-        sim = max(
-            similarity(title, result.get('name','')),
-            similarity(title, result.get('original_name',''))
-        )
-        if sim < 0.5: continue
+        if not hit:
+            best_sim = 0.0
+            for wd_key, wd_val in wd_series.items():
+                sv = similarity(title, wd_val['en'])
+                if sv > best_sim and sv >= 0.82:
+                    best_sim = sv; hit = wd_val
+                if wd_val.get('cs'):
+                    sv2 = similarity(title, wd_val['cs'])
+                    if sv2 > best_sim and sv2 >= 0.82:
+                        best_sim = sv2; hit = wd_val
 
-        details = tv_details(result['id'])
-        if details:
-            s.update(details)
+        if hit:
+            display, alt = best_title(hit.get('cs',''), hit.get('en',''))
+            s['display_title'] = display
+            s['alt_title']     = alt
+            s['cz_title']      = hit.get('cs','')
+            s['en_title']      = hit.get('en','')
             matched += 1
-        time.sleep(0.05)
 
     print(f'  Hotovo: {matched}/{len(series)} serialu sparovano')
     return series
 
+# ── Main ──────────────────────────────────────────────────────────────────────
+
 def main():
-    if not TMDB_KEY:
-        print('WARN: TMDB_KEY neni nastaven – preskakuji matching.')
-        return
-
-    print('=== TMDB Matching v2 ===')
-    print(f'Token: {TMDB_KEY[:10]}...')
-
-    # Test spojeni
-    test = tmdb_get('/configuration')
-    if not test:
-        print('ERROR: TMDB API nedostupne – zkontroluj TMDB_KEY v GitHub Secrets')
-        return
-    print('TMDB spojeni OK')
+    print('=== Wikidata Matching v3 ===', flush=True)
 
     movies_path = os.path.join(DB_DIR, 'movies.json')
     series_path = os.path.join(DB_DIR, 'series.json')
@@ -191,23 +207,35 @@ def main():
     series = load_json(series_path)
     print(f'Nacteno: {len(movies)} filmu, {len(series)} serialu')
 
-    movies = match_movies(movies)
-    series = match_series(series)
+    # Stáhni Wikidata
+    wd_movies = fetch_wikidata_movies()
+    time.sleep(2)  # respektuj rate limit Wikidata
+    wd_series = fetch_wikidata_series()
 
+    if not wd_movies and not wd_series:
+        print('WARN: Wikidata nedostupna – preskakuji matching.')
+        return
+
+    # Párování
+    movies = match_movies(movies, wd_movies)
+    series = match_series(series, wd_series)
+
+    # Ulož
     save_json(movies_path, movies)
     save_json(series_path, series)
 
-    m_matched = sum(1 for m in movies if m.get('tmdb_id'))
-    s_matched = sum(1 for s in series if s.get('tmdb_id'))
+    # Statistiky
+    m_matched = sum(1 for m in movies if m.get('display_title'))
+    s_matched = sum(1 for s in series if s.get('display_title'))
     print(f'\n=== VYSLEDEK ===')
     print(f'Filmy:   {m_matched}/{len(movies)} sparovano')
     print(f'Serialy: {s_matched}/{len(series)} sparovano')
 
-    # Ukazka
-    print('\nUkazka CZ nazvů:')
-    for s in series[:5]:
-        if s.get('display_title'):
-            print(f'  WS: {s["show_title"]}  →  {s["display_title"]} / {s.get("alt_title","")}')
+    # Ukázka
+    print('\nUkazka:')
+    for s in series[:10]:
+        if s.get('display_title') and s['display_title'] != s.get('show_title',''):
+            print(f'  WS: "{s["show_title"]}"  →  "{s["display_title"]}" / "{s.get("alt_title","")}"')
 
 if __name__ == '__main__':
     main()
