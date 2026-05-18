@@ -30,9 +30,7 @@ jobs:
           WS_PASS: ${{ secrets.WS_PASS }}
         run: python scripts/build_db.py
 
-      - name: Match with TMDB (CZ/EN nazvy)
-        env:
-          TMDB_KEY: ${{ secrets.TMDB_KEY }}
+      - name: Match with Wikidata (CZ/EN nazvy)
         run: python scripts/match_db.py
 
       - name: Commit & Push DB
