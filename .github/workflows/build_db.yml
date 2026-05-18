@@ -33,3 +33,4 @@ jobs:
           git diff --staged --quiet || git commit -m "DB build $(date +'%Y-%m-%d %H:%M')"
           git pull --rebase origin main
           git push
+
