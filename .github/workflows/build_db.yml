@@ -3,21 +3,16 @@ name: Build Full Database
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 2 * * 0'
-
-permissions:
-  contents: write
+    - cron: '0 2 * * 0'  # Každou neděli ve 2:00
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 340
+    timeout-minutes: 350
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -29,6 +24,10 @@ jobs:
           WS_USER: ${{ secrets.WS_USER }}
           WS_PASS: ${{ secrets.WS_PASS }}
         run: python scripts/build_db.py
+
+      - name: Enrich with CSFD
+        run: python scripts/csfd_enrich.py
+        continue-on-error: true  # Nevadí když ČSFD selže
 
       - name: Commit & Push DB
         run: |
