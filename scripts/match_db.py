@@ -1,22 +1,16 @@
 #!/usr/bin/env python3
 """
-match_db.py – Párování Webshare DB s TMDB
-- Stáhne CZ + EN názvy z TMDB
-- Spáruje s Webshare záznamy přes normalizovaný název
-- Výsledek: movies.json a series.json mají pole cz_title, en_title, tmdb_id
-
-Vyžaduje: TMDB_KEY v GitHub Secrets
+match_db.py v2 – TMDB matching s Bearer tokenem (v4 API)
+CZ název pokud existuje, jinak EN název
 """
-
 import os, json, time, re, unicodedata, urllib.request, urllib.parse, gzip
 from difflib import SequenceMatcher
 
-TMDB_KEY  = os.environ.get('TMDB_KEY','')
-DB_DIR    = os.path.join(os.path.dirname(__file__), '..', 'db')
-TMDB_LANG = ['cs', 'sk', 'en']
-API       = 'https://api.themoviedb.org/3'
+TMDB_KEY = os.environ.get('TMDB_KEY', '')
+DB_DIR   = os.path.join(os.path.dirname(__file__), '..', 'db')
+API      = 'https://api.themoviedb.org/3'
+IMG      = 'https://image.tmdb.org/t/p/w300'
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
 def norm(s):
     if not s: return ''
     s = unicodedata.normalize('NFKD', s)
@@ -31,15 +25,82 @@ def similarity(a, b):
 
 def tmdb_get(path, params={}):
     if not TMDB_KEY: return None
-    params['api_key'] = TMDB_KEY
     url = f'{API}{path}?{urllib.parse.urlencode(params)}'
     try:
-        req = urllib.request.Request(url, headers={'User-Agent':'KodiAddon/5.0'})
+        req = urllib.request.Request(url, headers={
+            'Authorization': f'Bearer {TMDB_KEY}',
+            'Accept': 'application/json',
+            'User-Agent': 'KodiAddon/5.0',
+        })
         with urllib.request.urlopen(req, timeout=15) as r:
             return json.loads(r.read())
     except Exception as e:
         print(f'  [TMDB] {path}: {e}')
         return None
+
+def best_title(cs_title, en_title, ws_title):
+    """
+    Vrátí (display_title, alt_title).
+    Preferuje CZ název pokud existuje a je smysluplný.
+    """
+    cs = (cs_title or '').strip()
+    en = (en_title or '').strip()
+    if cs and cs.lower() != en.lower():
+        return cs, en   # mame CZ preklad → zobraz CZ, alternativa EN
+    return en, ''       # jen EN nazev
+
+def search_movie(title, year=None):
+    params = {'query': title, 'language': 'cs'}
+    if year: params['primary_release_year'] = year
+    data = tmdb_get('/search/movie', params)
+    results = (data or {}).get('results', [])
+    if not results and year:
+        data = tmdb_get('/search/movie', {'query': title, 'language': 'cs'})
+        results = (data or {}).get('results', [])
+    return results[0] if results else None
+
+def search_tv(title):
+    data = tmdb_get('/search/tv', {'query': title, 'language': 'cs'})
+    results = (data or {}).get('results', [])
+    return results[0] if results else None
+
+def movie_details(tmdb_id):
+    cs = tmdb_get(f'/movie/{tmdb_id}', {'language': 'cs'}) or {}
+    en = tmdb_get(f'/movie/{tmdb_id}', {'language': 'en'}) or {}
+    cs_title = cs.get('title', '')
+    en_title = en.get('title', '') or cs.get('original_title', '')
+    display, alt = best_title(cs_title, en_title, '')
+    return {
+        'tmdb_id':       tmdb_id,
+        'display_title': display,   # co se zobrazí v Kodi
+        'alt_title':     alt,       # alternativní název
+        'cz_title':      cs_title,
+        'en_title':      en_title,
+        'overview':      cs.get('overview','') or en.get('overview',''),
+        'poster':        IMG + cs.get('poster_path','') if cs.get('poster_path') else
+                         (IMG + en.get('poster_path','') if en.get('poster_path') else ''),
+        'genres':        [g['name'] for g in (cs.get('genres') or [])],
+        'vote_average':  cs.get('vote_average', 0),
+    }
+
+def tv_details(tmdb_id):
+    cs = tmdb_get(f'/tv/{tmdb_id}', {'language': 'cs'}) or {}
+    en = tmdb_get(f'/tv/{tmdb_id}', {'language': 'en'}) or {}
+    cs_title = cs.get('name', '')
+    en_title = en.get('name', '') or cs.get('original_name', '')
+    display, alt = best_title(cs_title, en_title, '')
+    return {
+        'tmdb_id':       tmdb_id,
+        'display_title': display,
+        'alt_title':     alt,
+        'cz_title':      cs_title,
+        'en_title':      en_title,
+        'overview':      cs.get('overview','') or en.get('overview',''),
+        'poster':        IMG + cs.get('poster_path','') if cs.get('poster_path') else
+                         (IMG + en.get('poster_path','') if en.get('poster_path') else ''),
+        'genres':        [g['name'] for g in (cs.get('genres') or [])],
+        'vote_average':  cs.get('vote_average', 0),
+    }
 
 def load_json(path):
     if not os.path.exists(path): return []
@@ -51,154 +112,83 @@ def save_json(path, data):
     with gzip.open(path+'.gz','wb') as f: f.write(text.encode())
     print(f'  Ulozeno: {os.path.basename(path)} ({os.path.getsize(path)//1024} KB)')
 
-# ── TMDB vyhledávání ──────────────────────────────────────────────────────────
-_tmdb_cache = {}
-
-def tmdb_search_movie(title, year=None):
-    key = f'm:{norm(title)}:{year}'
-    if key in _tmdb_cache: return _tmdb_cache[key]
-    params = {'query': title, 'language': 'cs'}
-    if year: params['year'] = year
-    data = tmdb_get('/search/movie', params)
-    results = (data or {}).get('results', [])
-    if not results and year:
-        data = tmdb_get('/search/movie', {'query': title, 'language': 'cs'})
-        results = (data or {}).get('results', [])
-    result = results[0] if results else None
-    _tmdb_cache[key] = result
-    time.sleep(0.05)
-    return result
-
-def tmdb_search_tv(title):
-    key = f't:{norm(title)}'
-    if key in _tmdb_cache: return _tmdb_cache[key]
-    data = tmdb_get('/search/tv', {'query': title, 'language': 'cs'})
-    results = (data or {}).get('results', [])
-    result = results[0] if results else None
-    _tmdb_cache[key] = result
-    time.sleep(0.05)
-    return result
-
-def tmdb_movie_details(tmdb_id):
-    """Stáhne CZ + EN název pro film."""
-    cs = tmdb_get(f'/movie/{tmdb_id}', {'language': 'cs'})
-    en = tmdb_get(f'/movie/{tmdb_id}', {'language': 'en'})
-    if not cs and not en: return None
-    return {
-        'tmdb_id':  tmdb_id,
-        'cz_title': (cs or {}).get('title',''),
-        'en_title': (en or {}).get('title',''),
-        'overview': (cs or en or {}).get('overview',''),
-        'poster':   'https://image.tmdb.org/t/p/w300' + (cs or en or {}).get('poster_path','') if (cs or en or {}).get('poster_path') else '',
-    }
-
-def tmdb_tv_details(tmdb_id):
-    """Stáhne CZ + EN název pro seriál."""
-    cs = tmdb_get(f'/tv/{tmdb_id}', {'language': 'cs'})
-    en = tmdb_get(f'/tv/{tmdb_id}', {'language': 'en'})
-    if not cs and not en: return None
-    return {
-        'tmdb_id':  tmdb_id,
-        'cz_title': (cs or {}).get('name',''),
-        'en_title': (en or {}).get('name',''),
-        'overview': (cs or en or {}).get('overview',''),
-        'poster':   'https://image.tmdb.org/t/p/w300' + (cs or en or {}).get('poster_path','') if (cs or en or {}).get('poster_path') else '',
-    }
-
-# ── Párování filmů ────────────────────────────────────────────────────────────
 def match_movies(movies):
     print(f'\nParovani filmu ({len(movies)} zaznamu)...')
     matched = 0
     for i, m in enumerate(movies):
-        if i % 100 == 0:
-            print(f'  [{i}/{len(movies)}] matched: {matched}')
-
-        if m.get('tmdb_id'): continue  # uz sparovano
-
+        if i % 200 == 0:
+            print(f'  [{i}/{len(movies)}] matched: {matched}', flush=True)
+        if m.get('tmdb_id'): continue
         title = m.get('clean_title','')
         year  = m.get('year')
         if not title: continue
 
-        result = tmdb_search_movie(title, year)
-        if not result:
-            continue
+        result = search_movie(title, year)
+        if not result: continue
 
-        # Zkontroluj podobnost
-        ws_norm    = norm(title)
-        tmdb_title = result.get('title','')
-        tmdb_orig  = result.get('original_title','')
-        sim = max(similarity(ws_norm, norm(tmdb_title)),
-                  similarity(ws_norm, norm(tmdb_orig)))
+        sim = max(
+            similarity(title, result.get('title','')),
+            similarity(title, result.get('original_title',''))
+        )
+        if sim < 0.55: continue
 
-        if sim < 0.6:
-            continue  # prilis odlisne
-
-        details = tmdb_movie_details(result['id'])
+        details = movie_details(result['id'])
         if details:
             m.update(details)
             matched += 1
+        time.sleep(0.05)
 
     print(f'  Hotovo: {matched}/{len(movies)} filmu sparovano')
     return movies
 
-# ── Párování seriálů ──────────────────────────────────────────────────────────
 def match_series(series):
     print(f'\nParovani serialu ({len(series)} zaznamu)...')
     matched = 0
     for i, s in enumerate(series):
-        if i % 50 == 0:
-            print(f'  [{i}/{len(series)}] matched: {matched}')
-
+        if i % 100 == 0:
+            print(f'  [{i}/{len(series)}] matched: {matched}', flush=True)
         if s.get('tmdb_id'): continue
-
         title = s.get('show_title','')
         if not title: continue
 
-        result = tmdb_search_tv(title)
-        if not result:
-            continue
+        result = search_tv(title)
+        if not result: continue
 
-        ws_norm    = norm(title)
-        tmdb_name  = result.get('name','')
-        tmdb_orig  = result.get('original_name','')
-        sim = max(similarity(ws_norm, norm(tmdb_name)),
-                  similarity(ws_norm, norm(tmdb_orig)))
+        sim = max(
+            similarity(title, result.get('name','')),
+            similarity(title, result.get('original_name',''))
+        )
+        if sim < 0.5: continue
 
-        if sim < 0.55:
-            continue
-
-        details = tmdb_tv_details(result['id'])
+        details = tv_details(result['id'])
         if details:
             s.update(details)
-            # Pokud mame CZ nazev a je jiny nez ws nazev, aktualizuj show_title
-            cz = details.get('cz_title','')
-            en = details.get('en_title','')
-            if cz and norm(cz) != norm(title):
-                s['cz_title']  = cz
-                s['en_title']  = en or title
-                # Zachovej original pro vyhledavani
-                s['ws_title']  = title
             matched += 1
+        time.sleep(0.05)
 
     print(f'  Hotovo: {matched}/{len(series)} serialu sparovano')
     return series
 
-# ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     if not TMDB_KEY:
         print('WARN: TMDB_KEY neni nastaven – preskakuji matching.')
-        print('Pridej TMDB_KEY do GitHub Secrets pro CZ/EN nazvy.')
         return
 
-    print('=== TMDB Matching ===')
-    print(f'TMDB klic: {TMDB_KEY[:6]}...')
+    print('=== TMDB Matching v2 ===')
+    print(f'Token: {TMDB_KEY[:10]}...')
+
+    # Test spojeni
+    test = tmdb_get('/configuration')
+    if not test:
+        print('ERROR: TMDB API nedostupne – zkontroluj TMDB_KEY v GitHub Secrets')
+        return
+    print('TMDB spojeni OK')
 
     movies_path = os.path.join(DB_DIR, 'movies.json')
     series_path = os.path.join(DB_DIR, 'series.json')
 
     movies = load_json(movies_path)
     series = load_json(series_path)
-
     print(f'Nacteno: {len(movies)} filmu, {len(series)} serialu')
 
     movies = match_movies(movies)
@@ -207,12 +197,17 @@ def main():
     save_json(movies_path, movies)
     save_json(series_path, series)
 
-    # Statistiky
     m_matched = sum(1 for m in movies if m.get('tmdb_id'))
     s_matched = sum(1 for s in series if s.get('tmdb_id'))
     print(f'\n=== VYSLEDEK ===')
-    print(f'Filmy:  {m_matched}/{len(movies)} sparovano')
+    print(f'Filmy:   {m_matched}/{len(movies)} sparovano')
     print(f'Serialy: {s_matched}/{len(series)} sparovano')
+
+    # Ukazka
+    print('\nUkazka CZ nazvů:')
+    for s in series[:5]:
+        if s.get('display_title'):
+            print(f'  WS: {s["show_title"]}  →  {s["display_title"]} / {s.get("alt_title","")}')
 
 if __name__ == '__main__':
     main()
