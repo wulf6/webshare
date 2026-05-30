@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Webshare DB builder v3 – 403 dotazů, ~10 minut
+Webshare DB builder v4 – rozšířené dotazy pro maximální pokrytí
 """
 import os, sys, json, time, hashlib, re, unicodedata, datetime, gzip
 import urllib.request, urllib.parse
@@ -124,11 +124,11 @@ def _quality(n):
 
 def _cz(n):
     nl=n.lower()
-    return any(x in nl for x in ['.cz.','_cz_','-cz-',' cz ','czech','cesky','czdab','czdabing','cz dabing'])
+    return any(x in nl for x in ['.cz.','_cz_','-cz-',' cz ','czech','cesky','czdab','czdabing','cz dabing','cz tit'])
 
 def _sk(n):
     nl=n.lower()
-    return any(x in nl for x in ['.sk.','_sk_','-sk-',' sk ','slovak','slovensky','skdab','skdabing','sk dabing'])
+    return any(x in nl for x in ['.sk.','_sk_','-sk-',' sk ','slovak','slovensky','skdab','skdabing','sk dabing','sk tit'])
 
 def _ep(n):
     for p in _EP:
@@ -163,28 +163,91 @@ def parse(f):
             'type':'series' if is_s else 'movie','quality':q,'cz':cz,'sk':sk,
             'size':int(f.get('size',0) or 0),'score':score}
 
-# ── Dotazy – POUZE 403 ────────────────────────────────────────────────────────
+# ── Dotazy – rozšířené pro maximální pokrytí ──────────────────────────────────
 def build_queries():
     q = []
-    # Serialy: s01e az s20e × variace (bez hledani podle nazvu!)
+
+    # ── SERIÁLY ──────────────────────────────────────────────────────────────
     for s in range(1, 21):
         tag = f's{s:02d}e'
-        q += [tag, f'{tag} cz', f'{tag} sk', f'{tag} 1080p', f'{tag} 720p', f'{tag} 4k']
-    # Serialy podle roku (jen s01 – pokryje prvni serie)
+        q += [
+            tag,
+            f'{tag} cz',
+            f'{tag} sk',
+            f'{tag} 1080p',
+            f'{tag} 720p',
+            f'{tag} 4k',
+            f'{tag} dabing',
+            f'{tag} titulky',
+            f'{tag} mkv',
+        ]
+
+    # Seriály podle roku - více proxy epizod
+    for y in range(YEAR, 1995, -1):
+        q += [
+            f's01e01 {y}',
+            f's01e01 cz {y}',
+            f's01e01 sk {y}',
+            f's01e01 1080p {y}',
+            f's01e01 4k {y}',
+            f's01e01 dabing {y}',
+            f's02e01 {y}',
+            f's03e01 {y}',
+        ]
+
+    # ── FILMY 2000+ ───────────────────────────────────────────────────────────
     for y in range(YEAR, 1999, -1):
-        q += [f's01e01 {y}', f's01e01 cz {y}', f's01e01 1080p {y}']
-    # Filmy: rok × kvalita
-    for y in range(YEAR, 1999, -1):
-        q += [f'1080p {y}', f'4k {y}', f'720p {y}', f'cz dabing {y}', f'czech {y}',
-              f'bluray {y}', f'webrip {y}']
-    # Obecne filmy
-    q += ['cz dabing 1080p','cz dabing 4k','cz dabing bluray','sk dabing 1080p',
-          '4k bluray','uhd bluray','bdremux','1080p remux','1080p bluray',
-          'bdrip','dvdrip']
-    seen=set(); out=[]
+        q += [
+            f'1080p {y}',
+            f'4k {y}',
+            f'720p {y}',
+            f'cz dabing {y}',
+            f'czech {y}',
+            f'bluray {y}',
+            f'webrip {y}',
+            f'sk dabing {y}',
+            f'slovak {y}',
+            f'remux {y}',
+            f'web-dl {y}',
+            f'hdrip {y}',
+            f'cz tit {y}',
+            f'cz titulky {y}',
+            f'2160p {y}',
+            f'uhd {y}',
+            f'hdtv {y}',
+            f'dvdrip {y}',
+        ]
+
+    # ── FILMY 1950-1999 ───────────────────────────────────────────────────────
+    for y in range(1999, 1949, -1):
+        q += [
+            f'cz dabing {y}',
+            f'czech {y}',
+            f'1080p {y}',
+            f'720p {y}',
+            f'dvdrip {y}',
+            f'sk dabing {y}',
+            f'bluray {y}',
+        ]
+
+    # ── OBECNÉ ───────────────────────────────────────────────────────────────
+    q += [
+        'cz dabing 1080p', 'cz dabing 4k', 'cz dabing bluray',
+        'sk dabing 1080p', 'sk dabing 4k', 'sk dabing bluray',
+        '4k bluray', 'uhd bluray', 'bdremux', '1080p remux', '1080p bluray',
+        'bdrip', 'dvdrip',
+        'cz dabing 2160p', 'cz dabing uhd',
+        'cz titulky 1080p', 'cz titulky 4k',
+        'sk titulky 1080p',
+        'hevc 1080p cz', 'x265 cz', 'x264 cz',
+        'hdremux cz', 'bdremux cz',
+    ]
+
+    seen = set(); out = []
     for x in q:
-        xs=x.strip()
-        if xs and xs not in seen: seen.add(xs); out.append(xs)
+        xs = x.strip()
+        if xs and xs not in seen:
+            seen.add(xs); out.append(xs)
     return out
 
 # ── Fetch + store ─────────────────────────────────────────────────────────────
