@@ -366,3 +366,46 @@ def main():
     print(f'HOTOVO za {elapsed//60}m {elapsed%60}s',flush=True)
 
 if __name__=='__main__': main()
+
+# ── Aliasy pro kompatibilitu s update_db.py ───────────────────────────────────
+def login(username, password):
+    """Alias pro do_login() – kompatibilita s update_db.py."""
+    global _U, _P
+    _U = username
+    _P = password
+    token = do_login(username, password)
+    _tokens[threading.get_ident()] = token
+    return token
+
+def parse_file(f):
+    """Alias pro parse() – kompatibilita s update_db.py."""
+    return parse(f)
+
+def fetch_all_pages(query, token, max_pages=2, pause=0.3):
+    """Stáhne všechny stránky pro daný dotaz – kompatibilita s update_db.py."""
+    results = []
+    for page in range(max_pages):
+        root = _call('search/', {
+            'what': query, 'category': 'video', 'sort': 'rating',
+            'limit': 100, 'offset': page * 100, 'wst': token
+        })
+        if not _ok(root):
+            break
+        batch = [
+            {
+                'ident': f.findtext('ident', ''),
+                'name': f.findtext('name', ''),
+                'positive_votes': int(f.findtext('positive_votes', 0) or 0),
+                'size': int(f.findtext('size', 0) or 0)
+            }
+            for f in root.findall('file')
+        ]
+        results.extend(batch)
+        if len(batch) < 100:
+            break
+        time.sleep(pause)
+    return results
+
+def _normalize(s):
+    """Alias pro _norm() – kompatibilita s update_db.py."""
+    return _norm(s)
