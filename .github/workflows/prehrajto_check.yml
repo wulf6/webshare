@@ -1,0 +1,64 @@
+name: Přehraj.to Availability Check
+
+on:
+  schedule:
+    # Každou neděli ve 4:00 UTC (5:00 CET / 6:00 CEST)
+    - cron: '0 4 * * 0'
+  workflow_dispatch:
+    inputs:
+      reset_cache:
+        description: 'Resetuj cache a zkontroluj vše znovu'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340   # max ~5.5 hodin
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Reset cache (volitelné)
+        if: ${{ inputs.reset_cache == 'true' }}
+        run: |
+          python3 -c "
+          import json, gzip, os
+          for fname in ['db/movies.json', 'db/series.json']:
+              if not os.path.exists(fname):
+                  continue
+              with open(fname, 'r', encoding='utf-8') as f:
+                  data = json.load(f)
+              for item in data:
+                  item.pop('pt_available', None)
+              text = json.dumps(data, ensure_ascii=False, separators=(',',':'))
+              with open(fname, 'w', encoding='utf-8') as f:
+                  f.write(text)
+              with gzip.open(fname+'.gz', 'wb') as gz:
+                  gz.write(text.encode())
+              print(f'Reset: {fname} ({len(data)} položek)')
+          "
+
+      - name: Kontrola dostupnosti na Přehraj.to
+        run: python scripts/prehrajto_check.py
+
+      - name: Commit & Push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add db/
+          git diff --staged --quiet || git commit -m "PT check $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git pull --rebase origin main
+          git push
