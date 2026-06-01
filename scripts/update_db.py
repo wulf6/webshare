@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Webshare DB updater – denní aktualizace.
-P�idává nové filmy a epizody bez přepisování celé DB.
+Přidává nové filmy a epizody bez přepisování celé DB.
 Běží rychle ~15–30 minut.
 """
 
