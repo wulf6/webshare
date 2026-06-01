@@ -1,0 +1,40 @@
+name: TMDB Metadata Enrich
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Každou sobotu ve 2:00 UTC - po build_db.py (pátek 3:00)
+    - cron: '0 2 * * 6'
+
+permissions:
+  contents: write
+
+jobs:
+  enrich:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: TMDB Enrich
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+        run: python scripts/tmdb_enrich.py
+
+      - name: Commit & Push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add db/
+          git diff --staged --quiet || git commit -m "TMDB enrich $(date -u '+%Y-%m-%d')"
+          git pull --rebase origin main
+          git push
