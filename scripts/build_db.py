@@ -136,13 +136,23 @@ def _ep(n):
         if m: return True,int(m.group(1)),int(m.group(2))
     return False,None,None
 
+_SYMBOLS = re.compile('[\u2190-\u2BFF\u2600-\u27BF\U0001F000-\U0001FFFF\uFE0F]')
+_LANGTAG = re.compile(
+    r'[\s(\[]+(?:cz|sk|cs|czech|slovak)\s*[-+ ]?\s*(?:dabing|dab|dubbing|dub|titulky|tituly|tit|sub|subs)\b.*$'
+    r'|\s+(?:cz|sk)$', re.I)
+_TAIL = re.compile(r'[\s(\[{\-\u2013_.,|:+]+$')
+
 def _title(n):
     n=re.sub(r'\.[a-zA-Z0-9]{2,4}$','',n)
     ym=re.search(r'\b(19[5-9]\d|20[0-2]\d)\b',n)
     year=int(ym.group(1)) if ym else None
     parts=_JUNK.split(n); t=parts[0] if parts else n
-    t=re.sub(r'[\._\-]+',' ',t).strip()
-    return re.sub(r'\s+',' ',t),year
+    t=_SYMBOLS.sub(' ',t)
+    t=re.sub(r'[\._\-]+',' ',t)
+    t=re.sub(r'\s+',' ',t).strip()
+    t=_LANGTAG.sub('',t)          # "CZ dabing", "SK titulky" apod. na konci
+    t=_TAIL.sub('',t)             # osiřelé "(" z "(2018)" a podobně
+    return (t or re.sub(r'\s+',' ',n).strip()),year
 
 def _show(ct):
     t=ct or ''
